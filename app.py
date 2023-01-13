@@ -1,4 +1,5 @@
 from flask import Flask, redirect
+from astropy.coordinates import SkyCoord
 from skyfield.api import EarthSatellite
 from skyfield.api import load, wgs84
 import numpy as np
@@ -11,11 +12,13 @@ app = Flask(__name__)
 def root():
     return redirect('https://cps.iau.org/')
 
-@app.route('/tle/<tle>/<latitude>/<longitude>')
-def read_tle_string(tle, latitude, longitude):
+@app.route('/tle/<tle>/<latitude>/<longitude>/<julian_date>')
+def read_tle_string(tle, latitude, longitude, julian_date):
     '''
     Returns the Right Ascension and Declination relative to the observer's coordinates
-    for the given satellite's Two Line Element Data Set at epoch
+    for the given satellite's Two Line Element Data Set at inputted Julian Date.
+
+    **Please note, for the most accurate results, an inputted Julian Date close to the TLE epoch is necessary.
 
     Parameters
     ---------
@@ -25,22 +28,25 @@ def read_tle_string(tle, latitude, longitude):
         The observers latitude coordinate (positive value represents north, negative value represents south)
     longitude: 'float'
         The observers longitude coordinate (positive value represents east, negatie value represents west)
+    julian_date: 'float
+        UT1 Universal Time Julian Date. An input of 0 will use the TLE epoch.
 
     Returns
     -------
     Right Ascension: 'float'
-        The right ascension of the satellite in degrees relative to the observer
+        The right ascension of the satellite relative to observer coordinates in ICRS reference frame in degrees. Range of response is [0,360)
     Declination: 'float'
-        The declination of the satellite in degrees relative to the observer
+        The declination of the satellite relative to observer coordinates in ICRS reference frame in degrees. Range of response is [-90,90]
     '''
     #Get rid of ASCII representation for space
     tle = tle.replace("%20", ' ')
     #Retrieve the two lines
     u,w = tle[:69], tle[70:]
 
-    #Cast the latitude and longitude to floats (request parses as a string)
+    #Cast the latitude, longitude, and jd to floats (request parses as a string)
     lat = float(latitude)
     lon = float(longitude)
+    jd = float(julian_date)
 
     #This is the skyfield implementation
     ts = load.timescale()
@@ -48,16 +54,20 @@ def read_tle_string(tle, latitude, longitude):
 
     #Get current position and find topocentric ra and dec
     currPos = wgs84.latlon(lat, lon)
-    # Both times t are correct, one returns relative at runtime, other returns relative at satellite epoch
     # t = ts.now()
-    t = ts.ut1_jd(satellite.model.jdsatepoch)
+    # Set time to satellite epoch if input jd is 0, otherwise time is inputted jd
+    if jd == 0: t = ts.ut1_jd(satellite.model.jdsatepoch)
+    else: t = ts.ut1_jd(jd)
+
     difference = satellite - currPos
     topocentric = difference.at(t)
     ra, dec, distance = topocentric.radec()
 
+    deg = SkyCoord(ra.hstr(), dec.dstr())
+
     return {
-        'Right Ascension': ra.dstr(warn = False),
-        'Declination': dec.dstr()
+        'Right Ascension': deg.ra.degree,
+        'Declination': deg.dec.degree
     }
 
 @app.route('/tle_file/<file_path>')
@@ -96,7 +106,7 @@ def read_tle_from_file(file_path:str):
 def get_ephemeris(pos_string: str):
     '''
     Returns the geocentric Right Ascension and Declination of the orbiting 
-    mass given a position vector
+    mass given the geocentric position vector
 
     Parameters
     ---------
