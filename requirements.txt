@@ -1,0 +1,11 @@
+fastapi
+numpy
+spiceypy
+sgp4
+skyfield
+astropy
+requests
+a2wsgi
+flask
+astropy.coordinates
+julian

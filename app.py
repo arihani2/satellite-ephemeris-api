@@ -102,17 +102,21 @@ def read_tle_from_file(file_path:str):
     return to_return
 
 
-@app.route('/pos/<pos_string>')
-def get_ephemeris(pos_string: str):
+@app.route('/pos/<x>/<y>/<z>')
+def get_ephemeris(x, y, z):
     '''
     Returns the geocentric Right Ascension and Declination of the orbiting 
     mass given the geocentric position vector
 
     Parameters
     ---------
-    pos_string: 'str'
-        The position and velocity vector. Values are in order of (x,y,z, dx/dt, dy/dt, dz/dt).
-        Values are comma separated.
+    x: 'float'
+        The x position of the orbiting mass in km
+    y: 'float'
+        The y position of the orbiting mass in km
+    z: 'float'
+        The z position of the orbiting mass in km
+        
 
     Returns
     -------
@@ -121,8 +125,7 @@ def get_ephemeris(pos_string: str):
     Declination: 'float'
         The geocentric declination of the satellite in degrees
     '''
-    pos_vector = pos_string.split(',')
-    position = np.array([float(element) for element in pos_vector])
+    position = np.array([float(x), float(y), float(z)])
     ra, dec = icrf2radec(position)
 
     return {
