@@ -1,19 +1,26 @@
 from flask import Flask, redirect
-from astropy.coordinates import SkyCoord
 from skyfield.api import EarthSatellite
 from skyfield.api import load, wgs84
 import numpy as np
+import requests
 
 
 app = Flask(__name__)
+
+#Error handling
+@app.errorhandler(404)
+def page_not_found(e):
+    return 'Error 404: Page not found\nCheck your spelling to ensure you are accessing the correct endpoint', 404
 
 #Redirects user to the Center for the Protection of Dark and Quiet Sky homepage
 @app.route('/')
 def root():
     return redirect('https://cps.iau.org/')
 
-@app.route('/tle/<tle>/<latitude>/<longitude>/<julian_date>')
-def read_tle_string(tle, latitude, longitude, julian_date):
+@app.route('/tle/<tle>/<latitude>/<longitude>/<julian_date>', defaults={'flags': None})
+@app.route('/tle/<tle>/<latitude>/<longitude>/<julian_date>/<flags>')
+def read_tle_string(tle, latitude, longitude, julian_date, flags):
+    #TODO error handling
     '''
     Returns the Right Ascension and Declination relative to the observer's coordinates
     for the given satellite's Two Line Element Data Set at inputted Julian Date.
@@ -28,8 +35,15 @@ def read_tle_string(tle, latitude, longitude, julian_date):
         The observers latitude coordinate (positive value represents north, negative value represents south)
     longitude: 'float'
         The observers longitude coordinate (positive value represents east, negatie value represents west)
-    julian_date: 'float
+    julian_date: 'float'
         UT1 Universal Time Julian Date. An input of 0 will use the TLE epoch.
+    flags: 'str'
+        Optional flags to be passed in. All flags begin with &, followed by the command, and then the value. Currently, the only flags supported are:
+        &jpl: 'str'
+            If 'true', will return JPL ephemeris response. If 'false', will return Skyfield ephemeris. Default is 'false'
+            This assumes that the TLE uses the ASCII representation for newline, which is '%0A'
+        &elevation: 'float'
+            The elevation of the observer in meters. Default is 0
 
     Returns
     -------
@@ -37,6 +51,10 @@ def read_tle_string(tle, latitude, longitude, julian_date):
         The right ascension of the satellite relative to observer coordinates in ICRS reference frame in degrees. Range of response is [0,360)
     Declination: 'float'
         The declination of the satellite relative to observer coordinates in ICRS reference frame in degrees. Range of response is [-90,90]
+    Altitude: 'float'
+        The altitude of the satellite relative to observer coordinates in ICRS reference frame in degrees. Range of response is [0,90]
+    Azimuth: 'float'
+        The azimuth of the satellite relative to observer coordinates in ICRS reference frame in degrees. Range of response is [0,360)
     '''
     #Get rid of ASCII representation for space
     tle = tle.replace("%20", ' ')
@@ -48,13 +66,31 @@ def read_tle_string(tle, latitude, longitude, julian_date):
     lon = float(longitude)
     jd = float(julian_date)
 
+    #Parse flags
+    jpl = False
+    elevation = 0
+    if flags is not None:
+        flags = flags.replace("%20", '')
+        flag_list = flags.split('&')
+        for flag in flag_list:
+            if flag[:3] == 'jpl':
+                if flag[4:] == 'true': jpl = True
+            elif flag[:9] == 'elevation':
+                elevation = float(flag[10:])
+
+    #If JPL flag is true, use JPL ephemeris
+    if jpl:
+        elevation_km = elevation/1000
+        return requests.get(f'https://ssd.jpl.nasa.gov/api/horizons.api/?format=json&COMMAND=\'TLE\'&TLE={tle}\
+            &MAKE_EPHEM=\'YES\'&TLIST=\'{jd}\'&EPHEM_TYPE=\'OBSERVER\'&CENTER=\'coord\'\
+            &SITE_COORD=\'{lon},{lat},{elevation_km}\'&COORD_TYPE=\'GEODETIC\'&ANG_FORMAT=\'DEG\'').json()
+
     #This is the skyfield implementation
     ts = load.timescale()
     satellite = EarthSatellite(u,w,ts = ts)
 
     #Get current position and find topocentric ra and dec
-    currPos = wgs84.latlon(lat, lon)
-    # t = ts.now()
+    currPos = wgs84.latlon(lat, lon, elevation)
     # Set time to satellite epoch if input jd is 0, otherwise time is inputted jd
     if jd == 0: t = ts.ut1_jd(satellite.model.jdsatepoch)
     else: t = ts.ut1_jd(jd)
@@ -62,12 +98,13 @@ def read_tle_string(tle, latitude, longitude, julian_date):
     difference = satellite - currPos
     topocentric = difference.at(t)
     ra, dec, distance = topocentric.radec()
-
-    deg = SkyCoord(ra.hstr(), dec.dstr())
+    alt, az, distance = topocentric.altaz()
 
     return {
-        'Right Ascension': deg.ra.degree,
-        'Declination': deg.dec.degree
+        'Right Ascension': ra._degrees,
+        'Declination': dec.degrees,
+        'Altitude': alt.degrees,
+        'Azimuth': az.degrees
     }
 
 @app.route('/tle_file/<file_path>')
@@ -102,8 +139,8 @@ def read_tle_from_file(file_path:str):
     return to_return
 
 
-@app.route('/pos/<x>/<y>/<z>')
-def get_ephemeris(x, y, z):
+@app.route('/pos/<pos_str>')
+def get_ephemeris(pos_str):
     '''
     Returns the geocentric Right Ascension and Declination of the orbiting 
     mass given the geocentric position vector
@@ -125,6 +162,8 @@ def get_ephemeris(x, y, z):
     Declination: 'float'
         The geocentric declination of the satellite in degrees
     '''
+    standardized_pos = pos_str.replace("%20", '')
+    x, y, z = standardized_pos.split(',')
     position = np.array([float(x), float(y), float(z)])
     ra, dec = icrf2radec(position)
 

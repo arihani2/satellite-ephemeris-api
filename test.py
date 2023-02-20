@@ -2,12 +2,14 @@ import unittest
 import requests
 from astropy.coordinates import SkyCoord
 from datetime import datetime
+from random import randint
 import julian
 
 
 class TestAPI(unittest.TestCase):
     def setUp(self) -> None:
-        self.TOLERANCE = 0.01
+        self.RADEC_TOLERANCE = 0.01
+        self.AZALT_TOLERANCE = 0.1
         self.jd = julian.to_jd(datetime.now(), fmt='jd')
         self.lat = 51.4773207 #Greenwich Latitude
         self.long = 0.0 #Greenwich Longitude
@@ -26,31 +28,33 @@ class TestAPI(unittest.TestCase):
             jpl_tle = tle.replace('\r\n', '%0A').strip()
             tle = tle.replace('\r\n', ' ').strip()
 
-            #Get RA and DEC from JPL Horizons API
+            #Get RA, DEC, Altitude and Azimuth from JPL Horizons API
             jpl_response = requests.get(f'{self.JPL_URL}?format=json&COMMAND=\'TLE\'&TLE={jpl_tle}\
-            &MAKE_EPHEM=\'YES\'&TLIST=\'{self.jd}\'&EPHEM_TYPE=\'OBSERVER\'&CENTER=\'000@399\'').json()
+            &MAKE_EPHEM=\'YES\'&TLIST=\'{self.jd}\'&EPHEM_TYPE=\'OBSERVER\'&CENTER=\'000@399\'&ANG_FORMAT=\'DEG\'').json()
             lines = jpl_response['result'].splitlines()
             index = lines.index('$$SOE')
             jpl_response_data = lines[index+1].split()
-            ra_str = f'{jpl_response_data[2]}h{jpl_response_data[3]}m{jpl_response_data[4]}s'
-            dec_str = f'{jpl_response_data[5]}d{jpl_response_data[6]}m{jpl_response_data[7]}s'
-            coords = SkyCoord(ra_str, dec_str)
-            correct_ra = coords.ra.deg
-            correct_dec = coords.dec.deg
+            correct_ra = float(jpl_response_data[2])
+            correct_dec = float(jpl_response_data[3])
+            correct_az = float(jpl_response_data[8])
+            correct_alt = float(jpl_response_data[9])
 
-            #Get RA and DEC from Apex API
+            #Get RA, DEC, Altitude, and Azimuth from Apex API
             response = requests.get(f'{self.BASE_URL}tle/{tle}/{self.lat}/{self.long}/{self.jd}').json()
             ra = response['Right Ascension']
             dec = response['Declination']
+            alt = response['Altitude']
+            az = response['Azimuth']
 
-            #Compare RA and DEC
-            self.assertAlmostEqual(ra, correct_ra, delta=self.TOLERANCE)
-            self.assertAlmostEqual(dec, correct_dec, delta=self.TOLERANCE)
-        print(f'{len(self.NORAD_IDS)} TLE tests passed')
+            #Compare RA, DEC, Altitude, and Azimuth
+            self.assertAlmostEqual(ra, correct_ra, delta=self.RADEC_TOLERANCE)
+            self.assertAlmostEqual(dec, correct_dec, delta=self.RADEC_TOLERANCE)
+            self.assertAlmostEqual(alt, correct_alt, delta=self.AZALT_TOLERANCE)
+            self.assertAlmostEqual(az, correct_az, delta=self.AZALT_TOLERANCE)
+        print(f'\n{len(self.NORAD_IDS)} TLE tests passed\n')
 
     def testPosition(self):
         for id in self.NORAD_IDS:
-            # print(id)
             #Get TLE formatted for each API call
             CELESTRAK = f'https://celestrak.org/NORAD/elements/gp.php?CATNR={id}&FORMAT=2LE'
             tle = requests.get(CELESTRAK).text
@@ -74,25 +78,54 @@ class TestAPI(unittest.TestCase):
 
             #Retrieve coordinate response from JPL Horizons API
             jpl_coords = requests.get(f'{self.JPL_URL}?format=json&COMMAND=\'TLE\'&TLE={jpl_tle}\
-            &MAKE_EPHEM=\'YES\'&TLIST=\'{self.jd}\'&EPHEM_TYPE=\'OBSERVER\'&CENTER=\'500\'').json()
+            &MAKE_EPHEM=\'YES\'&TLIST=\'{self.jd}\'&EPHEM_TYPE=\'OBSERVER\'&CENTER=\'500\'&ANG_FORMAT=\'DEG\'').json()
             lines = jpl_coords['result'].splitlines()
             index = lines.index('$$SOE')
             jpl_response_data = lines[index+1].split()
-            ra_str = f'{jpl_response_data[2]}h{jpl_response_data[3]}m{jpl_response_data[4]}s'
-            dec_str = f'{jpl_response_data[5]}d{jpl_response_data[6]}m{jpl_response_data[7]}s'
-            coords = SkyCoord(ra_str, dec_str)
-            correct_ra = coords.ra.deg
-            correct_dec = coords.dec.deg
+            correct_ra = float(jpl_response_data[2])
+            correct_dec = float(jpl_response_data[3])
 
             #Get RA and DEC from Apex API
-            response = requests.get(f'{self.BASE_URL}pos/{x}/{y}/{z}').json() #breaks here
+            response = requests.get(f'{self.BASE_URL}pos/{x},{y},{z}').json() 
             ra = response['Right Ascension']
             dec = response['Declination']
 
             #Compare RA and DEC
-            self.assertAlmostEqual(ra, correct_ra, delta=self.TOLERANCE)
-            self.assertAlmostEqual(dec, correct_dec, delta=self.TOLERANCE)
-        print(f'{len(self.NORAD_IDS)} Position tests passed')
+            self.assertAlmostEqual(ra, correct_ra, delta=self.RADEC_TOLERANCE)
+            self.assertAlmostEqual(dec, correct_dec, delta=self.RADEC_TOLERANCE)
+        print(f'\n{len(self.NORAD_IDS)} Position tests passed\n')
+    
+    def testElevation(self):
+        for id in self.NORAD_IDS:
+            #Get TLE from Celestrak
+            CELESTRAK = f'https://celestrak.org/NORAD/elements/gp.php?CATNR={id}&FORMAT=2LE'
+            tle = requests.get(CELESTRAK).text
+            elevation = randint(0, 50000)
+            elevation_km = elevation / 1000
+
+            #Get TLE information in proper format for each API call
+            jpl_tle = tle.replace('\r\n', '%0A').strip()
+            tle = tle.replace('\r\n', ' ').strip()
+
+            #Get RA and DEC from JPL Horizons API
+            jpl_response = requests.get(f'{self.JPL_URL}?format=json&COMMAND=\'TLE\'&TLE={jpl_tle}\
+            &MAKE_EPHEM=\'YES\'&TLIST=\'{self.jd}\'&EPHEM_TYPE=\'OBSERVER\'&CENTER=\'coord\'\
+            &SITE_COORD=\'{self.long},{self.lat},{elevation_km}\'&COORD_TYPE=\'GEODETIC\'&ANG_FORMAT=\'DEG\'').json()
+            lines = jpl_response['result'].splitlines()
+            index = lines.index('$$SOE')
+            jpl_response_data = lines[index+1].split()
+            correct_ra = float(jpl_response_data[2])
+            correct_dec = float(jpl_response_data[3])
+
+            #Get RA and DEC from Apex API
+            response = requests.get(f'{self.BASE_URL}tle/{tle}/{self.lat}/{self.long}/{self.jd}/&elevation={elevation}').json()
+            ra = response['Right Ascension']
+            dec = response['Declination']
+
+            #Compare RA and DEC
+            self.assertAlmostEqual(ra, correct_ra, delta=self.RADEC_TOLERANCE)
+            self.assertAlmostEqual(dec, correct_dec, delta=self.RADEC_TOLERANCE)
+        print(f'\n{len(self.NORAD_IDS)} Elevation tests passed\n')
 
 
 
